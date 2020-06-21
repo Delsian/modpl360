@@ -11,11 +11,11 @@ static const struct ieee802154_ops pl360_ops = {
 	.xmit_sync = ops_pl360_xmit,
 	.ed = ops_pl360_ed,
 	.set_channel = ops_pl360_set_channel,
-//	.set_hw_addr_filt = adf7242_set_hw_addr_filt,
+	.set_hw_addr_filt = ops_pl360_set_hw_addr_filt,
 	.start = ops_pl360_start,
 	.stop = ops_pl360_stop,
-//	.set_csma_params = adf7242_set_csma_params,
-//	.set_frame_retries = adf7242_set_frame_retries,
+	.set_csma_params = ops_pl360_set_csma_params,
+	.set_frame_retries = ops_pl360_set_frame_retries,
 	.set_txpower = ops_pl360_set_txpower,
 	.set_promiscuous_mode = ops_pl360_set_promiscuous_mode,
 	.set_cca_ed_level = ops_pl360_set_cca_ed_level,
@@ -79,14 +79,9 @@ static int pl360_probe(struct spi_device *spi)
 {
 	struct ieee802154_hw *hw;
 	struct pl360_local *lp;
-	int ret, irq_type;
+	int ret;
 
 	printk("Probe pl360\n");
-
-	if (!spi->irq) {
-		dev_err(&spi->dev, "no IRQ specified\n");
-		return -EINVAL;
-	}
 
 	hw = ieee802154_alloc_hw(sizeof(*lp), &pl360_ops);
 	if (!hw)
@@ -136,35 +131,21 @@ static int pl360_probe(struct spi_device *spi)
 	ieee802154_random_extended_addr(&hw->phy->perm_extended_addr);
 
 	mutex_init(&lp->bmux);
+	mutex_init(&lp->plmux);
 	//init_completion(&lp->tx_complete);
 
-	//INIT_DELAYED_WORK(&lp->work, adf7242_rx_cal_work);
-	/*lp->wqueue = alloc_ordered_workqueue(dev_name(&spi->dev),
-					     WQ_MEM_RECLAIM);
-	if (unlikely(!lp->wqueue)) {
-		ret = -ENOMEM;
-		goto err_hw_init;
-	}*/
-
 	ret = pl360_hw_init(lp);
-	if (ret)
+	if (ret) {
+		printk("pl360 HW err %d\n", ret);
 		goto err_hw_init;
-
-	irq_type = irq_get_trigger_type(spi->irq);
-	if (!irq_type)
-		irq_type = IRQF_TRIGGER_HIGH;
-
-	ret = devm_request_threaded_irq(&spi->dev, spi->irq, NULL, pl360_isr,
-					irq_type | IRQF_ONESHOT,
-					dev_name(&spi->dev), lp);
-	if (ret)
-		goto err_hw_init;
-
-	disable_irq(spi->irq);
+	}
 
 	ret = ieee802154_register_hw(lp->hw);
-	if (ret)
+	if (ret) {
+		printk("ieee802154_register_hw err %d\n", ret);
 		goto err_hw_init;
+	}
+
 
 	dev_set_drvdata(&spi->dev, lp);
 
@@ -176,6 +157,7 @@ static int pl360_probe(struct spi_device *spi)
 
 err_hw_init:
 	mutex_destroy(&lp->bmux);
+	mutex_destroy(&lp->plmux);
 	ieee802154_free_hw(lp->hw);
 
 	return ret;
@@ -189,11 +171,9 @@ static int pl360_remove(struct spi_device *spi)
 
 	debugfs_remove_recursive(lp->debugfs_root);
 
-	cancel_delayed_work_sync(&lp->work);
-	destroy_workqueue(lp->wqueue);
-
 	ieee802154_unregister_hw(lp->hw);
 	mutex_destroy(&lp->bmux);
+	mutex_destroy(&lp->plmux);
 	ieee802154_free_hw(lp->hw);
 
 	return 0;
@@ -225,3 +205,7 @@ static struct spi_driver pl360_driver = {
 };
 
 module_spi_driver(pl360_driver);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Eug Krashtan <eug.krashtan@gmail.com>");
+MODULE_DESCRIPTION("PL360 IEEE802.15.4 Transceiver Driver");

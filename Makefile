@@ -13,6 +13,8 @@ clean:
 	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) clean
 
 install:
+	modprobe ieee802154_socket
+	modprobe mac802154
 	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) modules_install
 	/sbin/depmod -A
 

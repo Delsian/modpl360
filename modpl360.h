@@ -8,6 +8,9 @@
 #include <linux/irq.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/ieee802154.h>
 #include <net/mac802154.h>
@@ -56,10 +59,12 @@ struct pl360_local {
 	//struct completion tx_complete;
 	struct ieee802154_hw *hw;
 	struct mutex bmux; /* protect SPI messages */
+	struct mutex plmux; /* protect Receiver sequence */
 	struct dentry *debugfs_root;
-	struct delayed_work work;
+	struct work_struct rxwork;
+	struct work_struct txwork;
 	struct workqueue_struct *wqueue;
-	unsigned long flags;
+	uint16_t events;
 	int tx_stat;
 	bool promiscuous;
 	s8 rssi;
@@ -76,9 +81,13 @@ struct pl360_local {
 
 	struct spi_message spi_msg;
 	struct spi_transfer spi_transfer;
-	u8 buf_tx[PDC_PLC_BUFFER_SIZE];
-	u8 buf_rx[PDC_PLC_BUFFER_SIZE];
 };
+
+typedef struct {
+    uint16_t len;
+    uint16_t addr;
+    uint8_t buf[0];
+} plc_pkt_t;
 
 // Ops
 int ops_pl360_start(struct ieee802154_hw *hw);
@@ -86,15 +95,17 @@ void ops_pl360_stop(struct ieee802154_hw *hw);
 int ops_pl360_ed(struct ieee802154_hw *hw, u8 *level);
 int ops_pl360_set_txpower(struct ieee802154_hw *hw, int mbm);
 int ops_pl360_set_channel(struct ieee802154_hw  *hw,	u8 page, u8 channel);
+int ops_pl360_set_hw_addr_filt(struct ieee802154_hw *hw,
+	struct ieee802154_hw_addr_filt *filt, unsigned long changed);
 int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb);
+int ops_pl360_set_frame_retries(struct ieee802154_hw *hw, s8 retries);
+int ops_pl360_set_csma_params(struct ieee802154_hw *hw, u8 min_be,
+	u8 max_be, u8 retries);
 int ops_pl360_set_promiscuous_mode(struct ieee802154_hw *hw, bool on);
 int ops_pl360_set_cca_ed_level(struct ieee802154_hw *hw, s32 mbm);
 irqreturn_t pl360_isr(int irq, void *data);
 // Hardware
 int pl360_hw_init(struct pl360_local *data);
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Eug Krashtan <eug.krashtan@gmail.com>");
-MODULE_DESCRIPTION("PL360 IEEE802.15.4 Transceiver Driver");
+void pl360_datapkt(struct pl360_local *data, bool cmd, plc_pkt_t* pkt);
 
 #endif /* __modpl360_H */

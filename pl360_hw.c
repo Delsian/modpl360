@@ -23,7 +23,12 @@
 /** Bootloader command: Disable SPI control to bootloader */
 #define ATPL360_BOOT_CMD_DIS_SPI_CTRL       0xA55A
 
-static void pl360_reset(struct pl360_local *lp) {
+/* PDC Receive buffer */
+uint8_t plc_rx_buffer[PDC_PLC_BUFFER_SIZE] __attribute__((__aligned__(2)));
+/* PDC Transmission buffer */
+uint8_t plc_tx_buffer[PDC_PLC_BUFFER_SIZE] __attribute__((__aligned__(2)));
+
+static int pl360_reset(struct pl360_local *lp) {
 	int err;
 
     gpio_set_value(lp->gpio_ldo, 0);
@@ -35,75 +40,217 @@ static void pl360_reset(struct pl360_local *lp) {
 	err = spi_sync(lp->spi, &lp->spi_msg);
 	if(err<0) {
 		dev_crit(&lp->spi->dev,"SPI error %d\n", err);
+		return err;
 	}
 	msleep(10);
 	gpio_set_value(lp->gpio_nrst, 1);
 	msleep(50);
+	return 0;
 }
 
+static void pl360_boot_pkt(struct pl360_local *lp, 
+		uint16_t cmd, uint32_t addr, uint16_t data_len, uint8_t *data_buf) {
+	struct spi_device *spi = lp->spi;
+	int err;
 
+	memcpy(plc_tx_buffer, &addr, sizeof(uint32_t));
+	memcpy(&(plc_tx_buffer[4]), &cmd, sizeof(uint16_t));
+	memcpy(&(plc_tx_buffer[6]), data_buf, data_len);
+	lp->spi_transfer.len = data_len + 6;
+	err = spi_sync(spi, &lp->spi_msg);
+	if(err<0)
+		dev_crit(&spi->dev,"SPI write err %d \n", err);
+}
 
+static void pl360_booload(struct pl360_local *lp) {
+	uint8_t buf[4];
+	pl360_reset(lp);
 
+	buf[3] = (uint8_t)(ATPL360_BOOT_WRITE_KEY >> 24);
+	buf[2] = (uint8_t)(ATPL360_BOOT_WRITE_KEY >> 16);
+	buf[1] = (uint8_t)(ATPL360_BOOT_WRITE_KEY >> 8);
+	buf[0] = (uint8_t)(ATPL360_BOOT_WRITE_KEY);
+	pl360_boot_pkt(lp, ATPL360_BOOT_CMD_ENABLE_WRITE, 0, sizeof(buf), buf);
 
+	buf[3] = (uint8_t)(ATPL360_BOOT_WRITE_KEY >> 8);
+	buf[2] = (uint8_t)(ATPL360_BOOT_WRITE_KEY);
+	buf[1] = (uint8_t)(ATPL360_BOOT_WRITE_KEY >> 24);
+	buf[0] = (uint8_t)(ATPL360_BOOT_WRITE_KEY >> 16);
+	pl360_boot_pkt(lp, ATPL360_BOOT_CMD_ENABLE_WRITE, 0, sizeof(buf), buf);
+
+/* Send CPU Wait Cmd */
+ 	uint32_t reg_value = ATPL360_MISCR_CPUWAIT | ATPL360_MISCR_PPM_CALIB_OFF | ATPL360_MISCR_MEM_96_96_CFG |
+						 ATPL360_MISCR_EN_ACCESS_ERROR | ATPL360_MISCR_SET_GPIO_12_ZC;
+	buf[3] = (uint8_t)(reg_value >> 24);
+	buf[2] = (uint8_t)(reg_value >> 16);
+	buf[1] = (uint8_t)(reg_value >> 8);
+	buf[0] = (uint8_t)(reg_value);
+	pl360_boot_pkt(lp, ATPL360_BOOT_CMD_WRITE_WORD, ATPL360_MISCR, sizeof(buf), buf);
+
+	// Load FW
+	uint32_t fw_pending_len = sizeof(pl360_firmware);
+	uint8_t *fw_data = (uint8_t *)pl360_firmware;
+	uint32_t fw_prog_addr  = ATPL360_BOOT_PROGRAM_ADDR;
+	uint16_t fw_fragment_len;
+	while (fw_pending_len) {
+		if (fw_pending_len > PDC_SPI_FUP_BUFFER_SIZE) {
+			fw_fragment_len = PDC_SPI_FUP_BUFFER_SIZE;
+			fw_pending_len -= fw_fragment_len;
+		} else {
+			fw_fragment_len = fw_pending_len;
+			fw_pending_len = 0;
+			fw_fragment_len += (4 - (fw_fragment_len & 3)) & 3; // padding
+		}
+
+		/* Write fw block data */
+		pl360_boot_pkt(lp, ATPL360_BOOT_CMD_WRITE_BUF, fw_prog_addr, fw_fragment_len, fw_data);
+
+		/* Update counters */
+		fw_data += fw_fragment_len;
+		fw_prog_addr += fw_fragment_len;
+	}
+
+	// Disable CpuWait
+	reg_value = ATPL360_MISCR_PPM_CALIB_OFF | ATPL360_MISCR_MEM_96_96_CFG | ATPL360_MISCR_EN_ACCESS_ERROR | ATPL360_MISCR_SET_GPIO_12_ZC;
+	buf[3] = (uint8_t)(reg_value >> 24);
+	buf[2] = (uint8_t)(reg_value >> 16);
+	buf[1] = (uint8_t)(reg_value >> 8);
+	buf[0] = (uint8_t)(reg_value);
+	pl360_boot_pkt(lp, ATPL360_BOOT_CMD_WRITE_WORD, ATPL360_MISCR, sizeof(uint32_t), buf);
+	// Give control of the MISO signal to M7-SPI
+	pl360_boot_pkt(lp, ATPL360_BOOT_CMD_DIS_SPI_CTRL, 0, 0, NULL);
+	msleep(10);
+}
+
+static void pl360_check_status(struct pl360_local *lp, uint32_t st) {
+	uint16_t id;
+	id = st & 0xFEFF;
+
+	/* Check who is in the other side (bootloader / atpl360) */
+	if (PLC_SPI_HEADER_BOOT == id) {
+		printk("*** PLC Status boot\n");
+		pl360_booload(lp);
+	} else if (PLC_SPI_HEADER_CORTEX == id) {
+		lp->events = st >> 16;
+	} else {
+		/* Unexpected ID value -> Reset HW ATPL360 */
+		printk("*** PLC Status unknown %04x\n", id);
+		pl360_booload(lp);
+	}
+}
+
+static void pktwr(plc_pkt_t* pkt) {
+    uint16_t ptr = 0;
+    // change word seq to bytes
+    while( ptr < pkt->len) {
+        plc_tx_buffer[ptr+4] = pkt->buf[ptr+1];
+        plc_tx_buffer[ptr+5] = pkt->buf[ptr];
+        ptr += 2;
+    }
+}
+
+static void pktrd(plc_pkt_t* pkt) {
+    uint16_t ptr = 0;
+    // change word seq to bytes
+    while( ptr < pkt->len) {
+        pkt->buf[ptr+1] = plc_rx_buffer[ptr+4];
+        pkt->buf[ptr] = plc_rx_buffer[ptr+5];
+        ptr += 2;
+    }
+}
 
 int pl360_hw_init(struct pl360_local *lp)
 {
+    int ret;
     struct spi_device *spi = lp->spi;
 	dev_dbg(&spi->dev, "%s called\n", __func__);
     
 	spi_message_init(&lp->spi_msg);
 	lp->spi_transfer.len = 1;
-	lp->spi_transfer.tx_buf = &lp->buf_tx;
-	lp->spi_transfer.rx_buf = &lp->buf_rx;
+	lp->spi_transfer.tx_buf = plc_tx_buffer;
+	lp->spi_transfer.rx_buf = plc_rx_buffer;
 
 	spi_message_add_tail(&lp->spi_transfer, &lp->spi_msg);
 
-#if 0
-	data->cs_ctrl.gpio_dev =
-		device_get_binding(DT_INST_SPI_DEV_CS_GPIOS_LABEL(0));
-	data->cs_ctrl.gpio_pin = DT_INST_SPI_DEV_CS_GPIOS_PIN(0);
-	data->cs_ctrl.delay = 0U;
-	data->spi_cfg.cs = &(data->cs_ctrl);
-
-	data->nrst_gpio =
-		device_get_binding(DT_INST_GPIO_LABEL(0, nrst_gpios));
-	if (data->nrst_gpio == NULL) {
-		LOG_ERR("Could not get GPIO port for PLC reset");
-		return -EPERM;
+	lp->gpio_nrst = of_get_named_gpio(spi->dev.of_node,	"nrst-gpio",0);
+    ret = gpio_direction_output(lp->gpio_nrst, 1);
+	if (ret < 0) {
+		dev_crit(&spi->dev,	"Reset GPIO %d did not set to output mode\n",
+			lp->gpio_nrst);
+		goto err_gpio;
 	}
-	data->nrst_gpio_pin = DT_INST_GPIO_PIN(0, nrst_gpios);
-	data->ldo_gpio =
-		device_get_binding(DT_INST_GPIO_LABEL(0, ldo_gpios));
-	if (data->ldo_gpio == NULL) {
-		LOG_ERR("Could not get GPIO port for LDO enable");
-		return -EPERM;
+    lp->gpio_ldo = of_get_named_gpio(spi->dev.of_node,"ldo-gpio",0);
+    ret = gpio_direction_output(lp->gpio_ldo, 1);
+	if (ret < 0) {
+		dev_crit(&spi->dev,	"LDO GPIO %d did not set to output mode\n",
+			lp->gpio_ldo);
+		goto err_gpio;
 	}
-	data->ldo_gpio_pin = DT_INST_GPIO_PIN(0, ldo_gpios);
-
-	gpio_pin_configure(data->nrst_gpio, data->nrst_gpio_pin,
-			   GPIO_OUTPUT_ACTIVE |
-			   DT_INST_GPIO_FLAGS(0, nrst_gpios));
-	gpio_pin_configure(data->ldo_gpio, data->ldo_gpio_pin,
-			   GPIO_OUTPUT_ACTIVE |
-			   DT_INST_GPIO_FLAGS(0, ldo_gpios));
-
-	pl360_reset(dev);
-
-	// Init Interrupt pin (but not handler)
-	data->int_gpio =
-		device_get_binding(DT_INST_GPIO_LABEL(0, int_gpios));
-	if (data->int_gpio == NULL) {
-		LOG_ERR("Could not get interrupt pin for PLC");
-		return -EPERM;
+	lp->gpio_cs = of_get_named_gpio(spi->dev.of_node,"cs-gpio",0);
+    ret = gpio_direction_output(lp->gpio_cs, 1);
+	if (ret < 0) {
+		dev_crit(&spi->dev,	"CS GPIO %d did not set to output mode\n",
+			lp->gpio_cs);
+		ret = -EIO;
+		goto err_gpio;
 	}
-	data->int_gpio_pin = DT_INST_GPIO_PIN(0, int_gpios);
-	int err = gpio_pin_interrupt_configure(data->int_gpio,
-					   data->int_gpio_pin, GPIO_INT_EDGE_TO_INACTIVE);
-	if( err < 0) {
-		LOG_ERR("%d: Failed to configure interrupt on pin %d\n",
-			err, DT_INST_GPIO_PIN(0, int_gpios));
-		return -EPERM;
+
+	lp->gpio_irq = of_get_named_gpio(spi->dev.of_node,"irq-gpio",0);
+
+	lp->irq_id = gpio_to_irq(lp->gpio_irq);
+	if (lp->irq_id < 0) {
+		dev_crit(&spi->dev,"Could not get irq for gpio pin %d\n",
+			lp->gpio_irq);
+		gpio_free(lp->gpio_irq);
+		ret = -EIO;
+		goto err_gpio;
 	}
-#endif
-    return 0;
+    printk("GPIOS %d %d %d %d\n",lp->gpio_nrst,lp->gpio_ldo,lp->gpio_cs,lp->gpio_irq);
+
+    ret = pl360_reset(lp);
+err_gpio:
+    return ret;
+}
+
+void pl360_datapkt(struct pl360_local *lp, bool cmd, plc_pkt_t* pkt)
+{
+	int err;
+	uint16_t us_len_wr_rd = (((pkt->len + 1) >> 1) & PLC_LEN_MASK) | (cmd << PLC_WR_RD_POS);
+
+	printk("PLC len %d cmd %x addr %x", pkt->len, cmd, pkt->addr);
+	/* Check length */
+	if (!pkt->len) {
+		return;
+	}
+
+	/** Configure PLC Tx buffer **/
+	/* Address */
+	plc_tx_buffer[0] = (uint8_t)(pkt->addr >> 8);
+	plc_tx_buffer[1] = (uint8_t)(pkt->addr);
+	/* Length & read/write */
+	plc_tx_buffer[2] = (uint8_t)(us_len_wr_rd >> 8);
+	plc_tx_buffer[3] = (uint8_t)(us_len_wr_rd);
+
+	if (cmd == PLC_CMD_WRITE) {
+		pktwr(pkt);
+	} else {
+		memset(&plc_tx_buffer[PDC_SPI_HEADER_SIZE], 0, pkt->len);
+	}
+
+	lp->spi_transfer.len = pkt->len + PDC_SPI_HEADER_SIZE;
+	if (lp->spi_transfer.len % 2)	{
+		lp->spi_transfer.len++;
+	}
+	err = spi_sync(lp->spi, &lp->spi_msg);
+	if(err<0) {
+		printk("SPI error %d\n", err);
+	}
+
+	if (cmd == PLC_CMD_READ) {
+		pktrd(pkt);
+	}
+
+	uint32_t status = (plc_rx_buffer[2] << 24) + (plc_rx_buffer[3] << 16) +
+		(plc_rx_buffer[0] << 8) +  plc_rx_buffer[1];
+	pl360_check_status(lp, status);
 }
