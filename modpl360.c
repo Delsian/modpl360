@@ -134,6 +134,7 @@ static int pl360_probe(struct spi_device *spi)
 	mutex_init(&lp->plmux);
 	//init_completion(&lp->tx_complete);
 
+	spi_set_drvdata(spi, lp);
 	ret = pl360_hw_init(lp);
 	if (ret) {
 		printk("pl360 HW err %d\n", ret);
@@ -145,9 +146,6 @@ static int pl360_probe(struct spi_device *spi)
 		printk("ieee802154_register_hw err %d\n", ret);
 		goto err_hw_init;
 	}
-
-
-	dev_set_drvdata(&spi->dev, lp);
 
 	pl360_debugfs_init(lp);
 

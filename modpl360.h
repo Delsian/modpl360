@@ -17,15 +17,13 @@
 #include <net/cfg802154.h>
 
 /** SPI Header size. */
-#define PDC_SPI_HEADER_SIZE				4
+#define PDC_SPI_HEADER_SIZE				6 /* 4b cmd+ 2b size if boot pkt */
 /** SPI Max Msg_Data size. */
 #define PDC_SPI_MSG_DATA_SIZE			256
-/** SPI Max Msg_Data size. */
-#define PDC_SPI_MSG_PARAMS_SIZE			118   /* Worst case = 118: sizeof(rx_msg_t) [G3] */
 /** PDC buffer us_size. */
-#define PDC_PLC_BUFFER_SIZE			(PDC_SPI_HEADER_SIZE + PDC_SPI_MSG_DATA_SIZE + PDC_SPI_MSG_PARAMS_SIZE)
+#define PDC_PLC_BUFFER_SIZE			(PDC_SPI_HEADER_SIZE + PDC_SPI_MSG_DATA_SIZE)
 /** PDC buffer us_size to firmware update process */
-#define PDC_SPI_FUP_BUFFER_SIZE        256
+#define PDC_SPI_FUP_BUFFER_SIZE        PDC_SPI_MSG_DATA_SIZE
 #define MAX_PLC_PKT_LEN 160
 
 #define PLC_CMD_READ							0
@@ -81,6 +79,10 @@ struct pl360_local {
 
 	struct spi_message spi_msg;
 	struct spi_transfer spi_transfer;
+	/* PDC Receive buffer */
+	u8 rx_buffer[PDC_PLC_BUFFER_SIZE] ____cacheline_aligned;
+	/* PDC Transmission buffer */
+	u8 tx_buffer[PDC_PLC_BUFFER_SIZE] ____cacheline_aligned;
 };
 
 typedef struct {

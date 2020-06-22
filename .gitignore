@@ -51,3 +51,4 @@ Module.symvers
 Mkfile.old
 dkms.conf
 /pl360.dtbo
+/.history

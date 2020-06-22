@@ -5,6 +5,7 @@ endif
 
 obj-m += $(TARGET).o
 pl360-objs := modpl360.o pl360_ops.o pl360_hw.o
+ccflags-y := -std=gnu99 -Wno-declaration-after-statement
 
 all:
 	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) modules
