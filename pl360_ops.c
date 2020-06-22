@@ -215,11 +215,6 @@ typedef struct __attribute__((__packed__)) {
 
 #pragma pack(pop)
 
-struct work_container {
-	struct work_struct work;
-	struct pl360_local *lp;
-};
-
 #define ATPL360_CMF_PKT_SIZE                      sizeof(tx_cfm_t)
 
 static plc_pkt_t* txpkt; // Packet queued to transmit
@@ -262,9 +257,8 @@ static int pl360_rx(struct pl360_local *lp, plc_pkt_t* pkt) {
 
 static void pl360_handle_rx_work(struct work_struct *work)
 {
-	struct work_container *wpc = container_of(work,
-		struct work_container,	work);
-	struct pl360_local *lp = wpc->lp;
+	struct pl360_local *lp =
+		container_of(work, struct pl360_local, rxwork);
 
 	mutex_lock(&lp->plmux);
 	do {
@@ -324,9 +318,9 @@ static void pl360_handle_rx_work(struct work_struct *work)
 static void pl360_handle_tx_work(struct work_struct *work)
 {
 	plc_pkt_t* parampkt;
-	struct work_container *wpc = container_of(work,
-		struct work_container,	work);
-	struct pl360_local *lp = wpc->lp;
+	struct pl360_local *lp =
+		container_of(work, struct pl360_local, txwork);
+
 	if(lp->events) {
 		queue_work(lp->wqueue, &lp->rxwork);
 		queue_work(lp->wqueue, &lp->txwork);
@@ -383,20 +377,7 @@ static void pl360_set_config(plc_pkt_t* pkt, uint16_t param_id, uint16_t value) 
 	pkt->len = 8;
 }
 
-int ops_pl360_start(struct ieee802154_hw *hw)
-{
-	int ret = 0;
-	struct pl360_local *lp = hw->priv;
-	printk("pl360 start op\n");
-
-	INIT_WORK(&lp->rxwork, pl360_handle_rx_work);
-	INIT_WORK(&lp->txwork, pl360_handle_tx_work);
-	lp->wqueue = create_singlethread_workqueue(dev_name(&lp->spi->dev));
-	if (unlikely(!lp->wqueue)) {
-		ret = -ENOMEM;
-		goto err_ops_start;
-	}
-
+void pl360_conrigure(struct pl360_local *lp) {
 	plc_pkt_t* pkt = kmalloc(INIT_PKT_DATA_SIZE+sizeof(plc_pkt_t), GFP_KERNEL);
 	/* Read Time Ref to get SPI status and boot if necessary */
 	pkt->addr = ATPL360_STATUS_INFO_ID;
@@ -414,6 +395,21 @@ int ops_pl360_start(struct ieee802154_hw *hw)
 	pl360_datapkt(lp, PLC_CMD_WRITE, pkt);
 	msleep(1);
     kfree(pkt);
+}
+
+int ops_pl360_start(struct ieee802154_hw *hw)
+{
+	int ret = 0;
+	struct pl360_local *lp = hw->priv;
+	printk("pl360 start op, lp %p\n", lp);
+
+	INIT_WORK(&lp->rxwork, pl360_handle_rx_work);
+	INIT_WORK(&lp->txwork, pl360_handle_tx_work);
+	lp->wqueue = create_singlethread_workqueue(dev_name(&lp->spi->dev));
+	if (unlikely(!lp->wqueue)) {
+		ret = -ENOMEM;
+		goto err_ops_start;
+	}
 
 	/* Prepare default TX config */
 	const uint8_t tonemap[] = PL360_IF_DEFAULT_TONE_MAP;
@@ -433,6 +429,9 @@ int ops_pl360_start(struct ieee802154_hw *hw)
 	if(ret) {
 		printk( KERN_INFO "ISR handler req fail %d\n", ret );
 	}
+
+	/* Update RX status */
+	queue_work(lp->wqueue, &lp->rxwork);
 
 err_ops_start:
 	return ret;
@@ -457,10 +456,12 @@ void ops_pl360_stop(struct ieee802154_hw *hw)
 	disable_irq(lp->spi->irq);
 	//cancel_delayed_work_sync(&lp->rxwork);
 	//cancel_delayed_work_sync(&lp->txwork);
+	flush_workqueue(lp->wqueue);
 	destroy_workqueue(lp->wqueue);
 }
 
 int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
+	printk("pl360 xmit %d \n", skb->len);
 	plc_pkt_t* pkt;
 	struct pl360_local *lp = hw->priv;
 	while(txpkt) {
@@ -469,9 +470,9 @@ int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
 	}
 
     pkt = (plc_pkt_t*) kmalloc(sizeof(plc_pkt_t)
-		+ skb->truesize, GFP_KERNEL);
-    memcpy(pkt->buf, skb->data, skb->truesize);
-    pkt->len = skb->truesize;
+		+ skb->len, GFP_KERNEL);
+    memcpy(pkt->buf, skb->data, skb->len);
+    pkt->len = skb->len;
     pkt->addr = ATPL360_TX_DATA_ID;
 
     txpkt = pkt;

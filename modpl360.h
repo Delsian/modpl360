@@ -105,6 +105,7 @@ int ops_pl360_set_csma_params(struct ieee802154_hw *hw, u8 min_be,
 	u8 max_be, u8 retries);
 int ops_pl360_set_promiscuous_mode(struct ieee802154_hw *hw, bool on);
 int ops_pl360_set_cca_ed_level(struct ieee802154_hw *hw, s32 mbm);
+void pl360_conrigure(struct pl360_local *lp);
 irqreturn_t pl360_isr(int irq, void *data);
 // Hardware
 int pl360_hw_init(struct pl360_local *data);

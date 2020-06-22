@@ -81,8 +81,6 @@ static int pl360_probe(struct spi_device *spi)
 	struct pl360_local *lp;
 	int ret;
 
-	printk("Probe pl360\n");
-
 	hw = ieee802154_alloc_hw(sizeof(*lp), &pl360_ops);
 	if (!hw)
 		return -ENOMEM;
@@ -132,7 +130,6 @@ static int pl360_probe(struct spi_device *spi)
 
 	mutex_init(&lp->bmux);
 	mutex_init(&lp->plmux);
-	//init_completion(&lp->tx_complete);
 
 	spi_set_drvdata(spi, lp);
 	ret = pl360_hw_init(lp);

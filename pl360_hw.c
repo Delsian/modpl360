@@ -52,7 +52,6 @@ static int pl360_boot_pkt(struct pl360_local *lp,
 	memcpy(lp->tx_buffer, &addr, sizeof(uint32_t));
 	memcpy(&(lp->tx_buffer[4]), &cmd, sizeof(uint16_t));
 	memcpy(&(lp->tx_buffer[6]), data_buf, data_len);
-	//lp->spi_transfer.len = data_len + 6;
 	err = spi_write(spi, lp->tx_buffer, data_len + 6);
 	if(err<0)
 		dev_crit(&spi->dev,"SPI boot err %d \n", err);
@@ -99,8 +98,6 @@ static int pl360_booload(struct pl360_local *lp) {
 			fw_pending_len = 0;
 			fw_fragment_len += (4 - (fw_fragment_len & 3)) & 3; // padding
 		}
-		printk("boot %d %d %p\n", fw_pending_len, fw_fragment_len, fw_ptr);
-
 		/* Write fw block data */
 		err = pl360_boot_pkt(lp, ATPL360_BOOT_CMD_WRITE_BUF, fw_prog_addr, fw_fragment_len, fw_ptr);
 		if (err < 0) goto err_boot;
@@ -212,10 +209,10 @@ int pl360_hw_init(struct pl360_local *lp)
 		ret = -EIO;
 		goto err_gpio;
 	}
-    printk("GPIOS %d %d %d %d\n",lp->gpio_nrst,lp->gpio_ldo,lp->gpio_cs,lp->gpio_irq);
+    //printk("GPIOS %d %d %d %d\n",lp->gpio_nrst,lp->gpio_ldo,lp->gpio_cs,lp->gpio_irq);
 
     pl360_reset(lp);
-	//ret = pl360_booload(lp);
+	pl360_conrigure(lp);
 err_gpio:
     return ret;
 }
@@ -225,7 +222,7 @@ void pl360_datapkt(struct pl360_local *lp, bool cmd, plc_pkt_t* pkt)
 	int err;
 	uint16_t us_len_wr_rd = (((pkt->len + 1) >> 1) & PLC_LEN_MASK) | (cmd << PLC_WR_RD_POS);
 
-	printk("PLC len %d cmd %x addr %x", pkt->len, cmd, pkt->addr);
+	//printk("PLC len %d cmd %x addr %x", pkt->len, cmd, pkt->addr);
 	/* Check length */
 	if (!pkt->len) {
 		return;
