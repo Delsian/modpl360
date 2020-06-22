@@ -238,19 +238,17 @@ static void pl360_update_status(struct pl360_local *lp) {
 
 static int pl360_rx(struct pl360_local *lp, plc_pkt_t* pkt) {
 	struct sk_buff *skb;
-	u8 *data;
 
 	if (!ieee802154_is_valid_psdu_len(pkt->len)) {
 		dev_dbg(&lp->spi->dev,
 			"corrupted frame received len %d\n", (int)pkt->len);
 		pkt->len = IEEE802154_MTU;
 	}
-	skb = dev_alloc_skb(pkt->len);
+	skb = dev_alloc_skb(pkt->len + 2);
 	if (!skb) {
 		return -ENOMEM;
 	}
-	data = skb_put(skb, pkt->len);
-	memcpy(data,pkt->buf,pkt->len);
+	memcpy(skb_put(skb, pkt->len),pkt->buf,pkt->len);
 	ieee802154_rx_irqsafe(lp->hw, skb, 1); // LQI ToDo!!!
 	return 0;
 }
@@ -401,7 +399,6 @@ int ops_pl360_start(struct ieee802154_hw *hw)
 {
 	int ret = 0;
 	struct pl360_local *lp = hw->priv;
-	printk("pl360 start op, lp %p\n", lp);
 
 	INIT_WORK(&lp->rxwork, pl360_handle_rx_work);
 	INIT_WORK(&lp->txwork, pl360_handle_tx_work);
@@ -454,14 +451,12 @@ void ops_pl360_stop(struct ieee802154_hw *hw)
 	struct pl360_local *lp = hw->priv;
 
 	disable_irq(lp->spi->irq);
-	//cancel_delayed_work_sync(&lp->rxwork);
-	//cancel_delayed_work_sync(&lp->txwork);
 	flush_workqueue(lp->wqueue);
 	destroy_workqueue(lp->wqueue);
 }
 
 int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
-	printk("pl360 xmit %d \n", skb->len);
+	//printk("pl360 xmit %d \n", skb->len);
 	plc_pkt_t* pkt;
 	struct pl360_local *lp = hw->priv;
 	while(txpkt) {
@@ -481,13 +476,13 @@ int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
 }
 
 int ops_pl360_set_frame_retries(struct ieee802154_hw *hw, s8 retries) {
-	printk("pl360 set retries %d\n", retries);
+	//printk("pl360 set retries %d\n", retries);
 	return 0;
 }
 
 int ops_pl360_set_csma_params(struct ieee802154_hw *hw, u8 min_be,
 				   u8 max_be, u8 retries) {
-	printk("pl360 set csma_params %d %d %d\n", min_be, max_be, retries);
+	//printk("pl360 set csma_params %d %d %d\n", min_be, max_be, retries);
 	return 0;
 }
 
@@ -499,22 +494,22 @@ int ops_pl360_set_hw_addr_filt(struct ieee802154_hw *hw,
 
 int ops_pl360_set_channel(struct ieee802154_hw  *hw,
 	u8 page, u8 channel) {
-	printk("pl360 set ch %d\n", channel);
+	//printk("pl360 set ch %d\n", channel);
     return 0;
 }
 
 int ops_pl360_set_txpower(struct ieee802154_hw *hw, int mbm) {
-	printk("pl360 set txpower %d\n", mbm);
+	//printk("pl360 set txpower %d\n", mbm);
     return 0;
 }
 
 int ops_pl360_set_promiscuous_mode(struct ieee802154_hw *hw, bool on) {
-	printk("pl360 set promiscuous %d\n", on);
+	//printk("pl360 set promiscuous %d\n", on);
     return 0;
 }
 
 int ops_pl360_set_cca_ed_level(struct ieee802154_hw *hw, s32 mbm) {
-	printk("pl360 cca ed %d\n", mbm);
+	//printk("pl360 cca ed %d\n", mbm);
     return 0;
 }
 

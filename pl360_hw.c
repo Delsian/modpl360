@@ -132,13 +132,13 @@ static void pl360_check_status(struct pl360_local *lp, uint32_t st) {
 
 	/* Check who is in the other side (bootloader / atpl360) */
 	if (PLC_SPI_HEADER_BOOT == id) {
-		printk("*** PLC Status boot\n");
+		//printk("*** PLC Status boot\n");
 		pl360_booload(lp);
 	} else if (PLC_SPI_HEADER_CORTEX == id) {
 		lp->events = st >> 16;
 	} else {
 		/* Unexpected ID value -> Reset HW ATPL360 */
-		printk("*** PLC Status unknown %04x\n", id);
+		//printk("*** PLC Status unknown %04x\n", id);
 		pl360_booload(lp);
 	}
 }
@@ -190,14 +190,6 @@ int pl360_hw_init(struct pl360_local *lp)
 			lp->gpio_ldo);
 		goto err_gpio;
 	}
-	lp->gpio_cs = of_get_named_gpio(spi->dev.of_node,"cs-gpio",0);
-    ret = gpio_direction_output(lp->gpio_cs, 1);
-	if (ret < 0) {
-		dev_crit(&spi->dev,	"CS GPIO %d did not set to output mode\n",
-			lp->gpio_cs);
-		ret = -EIO;
-		goto err_gpio;
-	}
 
 	lp->gpio_irq = of_get_named_gpio(spi->dev.of_node,"irq-gpio",0);
 
@@ -209,7 +201,7 @@ int pl360_hw_init(struct pl360_local *lp)
 		ret = -EIO;
 		goto err_gpio;
 	}
-    //printk("GPIOS %d %d %d %d\n",lp->gpio_nrst,lp->gpio_ldo,lp->gpio_cs,lp->gpio_irq);
+    //printk("GPIOS %d %d %d\n",lp->gpio_nrst,lp->gpio_ldo,lp->gpio_irq);
 
     pl360_reset(lp);
 	pl360_conrigure(lp);
