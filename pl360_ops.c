@@ -267,17 +267,18 @@ static void pl360_update_status(struct pl360_local *lp) {
 
 static int pl360_rx(struct pl360_local *lp, plc_pkt_t* pkt) {
 	struct sk_buff *skb;
+	int reallen = pkt->buf[0];
 
-	if (!ieee802154_is_valid_psdu_len(pkt->len)) {
+	if (!ieee802154_is_valid_psdu_len(reallen)) {
 		dev_dbg(&lp->spi->dev,
-			"corrupted frame received len %d\n", (int)pkt->len);
-		pkt->len = IEEE802154_MTU;
+			"corrupted frame received len %d\n", reallen);
+		reallen = IEEE802154_MTU;
 	}
-	skb = dev_alloc_skb(pkt->len + 2);
+	skb = dev_alloc_skb(reallen + 2);
 	if (!skb) {
 		return -ENOMEM;
 	}
-	memcpy(skb_put(skb, pkt->len),pkt->buf,pkt->len);
+	memcpy(skb_put(skb, reallen),&(pkt->buf[1]),reallen);
 	ieee802154_rx_irqsafe(lp->hw, skb, 1); // LQI ToDo!!!
 	return 0;
 }
@@ -332,14 +333,19 @@ static void pl360_handle_rx_work(struct work_struct *work)
 		} else if (lp->events & ATPL360_RX_DATA_IND_FLAG_MASK) {
 			plc_pkt_t* rxpkt;
 			// Handle RX data, data length (15 bits) 
-			uint16_t l = status.evt & 0x7F;
+			uint16_t l = (status.evt & 0x7F)*2;
 			rxpkt = (plc_pkt_t*)kmalloc(l + sizeof(plc_pkt_t), 
 				GFP_KERNEL);
 			rxpkt->addr = ATPL360_RX_DATA_ID;
 			rxpkt->len = l;
 			pl360_datapkt(lp, PLC_CMD_READ, rxpkt);
-			pl360_rx(lp, rxpkt);
+			if(rxpkt->buf[0]<=l) {
+				pl360_rx(lp, rxpkt);
+			} else {
+				printk("RX bad lengyn %d internal %d", l, rxpkt->buf[0]);
+			}
 			kfree(rxpkt);
+			txstate = TX_READY;
 		}
 	} while (lp->events);
 
@@ -485,9 +491,10 @@ int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
 	struct pl360_local *lp = hw->priv;
 
     pkt = (plc_pkt_t*) kmalloc(sizeof(plc_pkt_t)
-		+ skb->len, GFP_KERNEL);
-    memcpy(pkt->buf, skb->data, skb->len);
-    pkt->len = skb->len;
+		+ skb->len + 1, GFP_KERNEL);
+    memcpy(&(pkt->buf[1]), skb->data, skb->len);
+	pkt->buf[0] = skb->len;
+    pkt->len = skb->len+1;
     pkt->addr = ATPL360_TX_DATA_ID;
 
 	kfifo_in(&tx_fifo, &pkt, sizeof(plc_pkt_t*));
