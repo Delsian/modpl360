@@ -1,5 +1,27 @@
+/*
+Copyright (c) 2020 Eug Krashtan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
 
 #include "modpl360.h"
+#include <linux/kfifo.h>
 
 /* ! \name G3 Modulation types */
 enum mod_types {
@@ -215,11 +237,18 @@ typedef struct __attribute__((__packed__)) {
 
 #pragma pack(pop)
 
-#define ATPL360_CMF_PKT_SIZE                      sizeof(tx_cfm_t)
+typedef struct {
+    uint16_t len;
+    uint16_t addr;
+    pl360_tx_config_t conf;
+} txconf_t;
+static txconf_t txcf;
 
-static plc_pkt_t* txpkt; // Packet queued to transmit
+#define ATPL360_CMF_PKT_SIZE                      sizeof(tx_cfm_t)
+#define PL360_FIFO_SIZE 10
+
+static struct kfifo tx_fifo; // Packet queued to transmit
 static status_t status;
-static pl360_tx_config_t txconf;
 
 typedef struct {
     uint16_t len;
@@ -258,7 +287,12 @@ static void pl360_handle_rx_work(struct work_struct *work)
 	struct pl360_local *lp =
 		container_of(work, struct pl360_local, rxwork);
 
-	mutex_lock(&lp->plmux);
+	typedef enum {
+		TX_READY,
+		TX_BUSY
+	} tx_state_e;
+	static tx_state_e txstate = TX_READY;
+
 	do {
 		pl360_update_status(lp);
 		if (lp->events & ATPL360_TX_CFM_FLAG_MASK) {
@@ -268,11 +302,9 @@ static void pl360_handle_rx_work(struct work_struct *work)
 			cfmpkt->addr = ATPL360_TX_CFM_ID;
 			cfmpkt->len = ATPL360_CMF_PKT_SIZE;
 			pl360_datapkt(lp, PLC_CMD_READ, cfmpkt);
+			tx_cfm_t* cfm = (tx_cfm_t*)cfmpkt->buf;
+			txstate = TX_READY;
 			kfree(cfmpkt);
-			if(txpkt) {
-				kfree(txpkt);
-				txpkt = NULL;
-			}
 		} else if (lp->events & ATPL360_REG_RSP_MASK) {
 			// Handle RegResp
 			plc_pkt_t* rsppkt;
@@ -310,33 +342,19 @@ static void pl360_handle_rx_work(struct work_struct *work)
 			kfree(rxpkt);
 		}
 	} while (lp->events);
-	mutex_unlock(&lp->plmux);
-}
 
-static void pl360_handle_tx_work(struct work_struct *work)
-{
-	plc_pkt_t* parampkt;
-	struct pl360_local *lp =
-		container_of(work, struct pl360_local, txwork);
-
-	if(lp->events) {
-		queue_work(lp->wqueue, &lp->rxwork);
-		queue_work(lp->wqueue, &lp->txwork);
-	} else {
-		if (txpkt) {
-			txconf.data_len = txpkt->len;
-			// ToDo: change to static copy
-			parampkt = (plc_pkt_t*)kmalloc(sizeof(pl360_tx_config_t)
-				+ sizeof(plc_pkt_t), GFP_KERNEL);
-			parampkt->addr = ATPL360_TX_PARAM_ID;
-			parampkt->len = sizeof(pl360_tx_config_t);
-			memcpy(parampkt->buf,&txconf,sizeof(pl360_tx_config_t));
-			mutex_lock(&lp->plmux);
-			pl360_datapkt(lp, PLC_CMD_WRITE, parampkt);
-			pl360_datapkt(lp, PLC_CMD_WRITE, txpkt);
-			mutex_unlock(&lp->plmux);
-			kfree(parampkt);
+	if(txstate == TX_READY &&
+			!kfifo_is_empty(&tx_fifo)) {
+		plc_pkt_t* pkt;
+		if (kfifo_out(&tx_fifo, &pkt, sizeof(plc_pkt_t*)) != sizeof(plc_pkt_t*)) {
+			dev_err(&lp->spi->dev,"test_interface: Wrong number of elements popped from upstream fifo\n");
+			return;
 		}
+		txcf.conf.data_len = pkt->len;
+		pl360_datapkt(lp, PLC_CMD_WRITE, (plc_pkt_t*)&txcf);
+		pl360_datapkt(lp, PLC_CMD_WRITE, pkt);
+		kfree(pkt);
+		txstate = TX_BUSY;
 	}
 }
 
@@ -400,8 +418,11 @@ int ops_pl360_start(struct ieee802154_hw *hw)
 	int ret = 0;
 	struct pl360_local *lp = hw->priv;
 
+	ret = kfifo_alloc(&tx_fifo,PL360_FIFO_SIZE,GFP_KERNEL);
+	if(ret) {
+		goto err_ops_start;
+	}
 	INIT_WORK(&lp->rxwork, pl360_handle_rx_work);
-	INIT_WORK(&lp->txwork, pl360_handle_tx_work);
 	lp->wqueue = create_singlethread_workqueue(dev_name(&lp->spi->dev));
 	if (unlikely(!lp->wqueue)) {
 		ret = -ENOMEM;
@@ -410,16 +431,18 @@ int ops_pl360_start(struct ieee802154_hw *hw)
 
 	/* Prepare default TX config */
 	const uint8_t tonemap[] = PL360_IF_DEFAULT_TONE_MAP;
-	txconf.tx_time = 0;
-	memcpy(txconf.tone_map, tonemap, sizeof(tonemap));
+	txcf.conf.tx_time = 0;
+	memcpy(txcf.conf.tone_map, tonemap, sizeof(tonemap));
 
-	txconf.tx_mode =  TX_MODE_RELATIVE; // uc_tx_mode
-	txconf.tx_time = 0x3E8;
-	txconf.tx_power =  PL360_IF_TX_POWER; // uc_tx_power
+	txcf.conf.tx_mode =  TX_MODE_RELATIVE; // uc_tx_mode
+	txcf.conf.tx_time = 0x3E8;
+	txcf.conf.tx_power =  PL360_IF_TX_POWER; // uc_tx_power
 
-	txconf.mod_type =  MOD_TYPE_BPSK; // uc_mod_type
-	txconf.mod_scheme =  MOD_SCHEME_DIFFERENTIAL; // uc_mod_scheme
-	txconf.uc_delimiter_type =  DT_SOF_NO_RESP; // uc_delimiter_type
+	txcf.conf.mod_type =  MOD_TYPE_BPSK; // uc_mod_type
+	txcf.conf.mod_scheme =  MOD_SCHEME_DIFFERENTIAL; // uc_mod_scheme
+	txcf.conf.uc_delimiter_type =  DT_SOF_NO_RESP; // uc_delimiter_type
+	txcf.addr = ATPL360_TX_PARAM_ID;
+    txcf.len = sizeof(pl360_tx_config_t);
 
 	ret = request_irq(lp->irq_id, pl360_isr,
 		IRQF_TRIGGER_FALLING, "pl360-irq", spi_get_drvdata(lp->spi)	);
@@ -453,16 +476,13 @@ void ops_pl360_stop(struct ieee802154_hw *hw)
 	disable_irq(lp->spi->irq);
 	flush_workqueue(lp->wqueue);
 	destroy_workqueue(lp->wqueue);
+	kfifo_free(&tx_fifo);
 }
 
 int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
 	//printk("pl360 xmit %d \n", skb->len);
 	plc_pkt_t* pkt;
 	struct pl360_local *lp = hw->priv;
-	while(txpkt) {
-		queue_work(lp->wqueue, &lp->rxwork);
-		msleep(5);
-	}
 
     pkt = (plc_pkt_t*) kmalloc(sizeof(plc_pkt_t)
 		+ skb->len, GFP_KERNEL);
@@ -470,8 +490,8 @@ int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
     pkt->len = skb->len;
     pkt->addr = ATPL360_TX_DATA_ID;
 
-    txpkt = pkt;
-	queue_work(lp->wqueue, &lp->txwork);
+	kfifo_in(&tx_fifo, &pkt, sizeof(plc_pkt_t*));
+	queue_work(lp->wqueue, &lp->rxwork);
     return 0;
 }
 

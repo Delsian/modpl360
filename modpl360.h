@@ -1,3 +1,24 @@
+/*
+Copyright (c) 2020 Eug Krashtan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
 
 #ifndef __modpl360_H
 #define __modpl360_H
@@ -17,11 +38,11 @@
 #include <net/cfg802154.h>
 
 /** SPI Header size. */
-#define PDC_SPI_HEADER_SIZE				6 /* 4b cmd+ 2b size if boot pkt */
+#define PDC_SPI_HEADER_SIZE				4 /* 4b cmd+ 2b size if boot pkt */
 /** SPI Max Msg_Data size. */
 #define PDC_SPI_MSG_DATA_SIZE			256
 /** PDC buffer us_size. */
-#define PDC_PLC_BUFFER_SIZE			(PDC_SPI_HEADER_SIZE + PDC_SPI_MSG_DATA_SIZE)
+#define PDC_PLC_BUFFER_SIZE			(PDC_SPI_HEADER_SIZE + PDC_SPI_MSG_DATA_SIZE+2)
 /** PDC buffer us_size to firmware update process */
 #define PDC_SPI_FUP_BUFFER_SIZE        PDC_SPI_MSG_DATA_SIZE
 #define MAX_PLC_PKT_LEN 160
@@ -57,10 +78,8 @@ struct pl360_local {
 	//struct completion tx_complete;
 	struct ieee802154_hw *hw;
 	struct mutex bmux; /* protect SPI messages */
-	struct mutex plmux; /* protect Receiver sequence */
 	struct dentry *debugfs_root;
 	struct work_struct rxwork;
-	struct work_struct txwork;
 	struct workqueue_struct *wqueue;
 	uint16_t events;
 	int tx_stat;

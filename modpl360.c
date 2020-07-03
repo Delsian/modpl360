@@ -1,3 +1,24 @@
+/*
+Copyright (c) 2020 Eug Krashtan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
 
 #include <linux/delay.h>
 #include <linux/debugfs.h>
@@ -96,8 +117,9 @@ static int pl360_probe(struct spi_device *spi)
 	/* ToDo - Emulate 2.4 Ghz channel */
 	hw->phy->supported.channels[0] = 0x7FFF800;
 
-	hw->flags = IEEE802154_HW_RX_OMIT_CKSUM |
-		    IEEE802154_HW_FRAME_RETRIES |
+	hw->flags = IEEE802154_HW_TX_OMIT_CKSUM |
+			IEEE802154_HW_RX_OMIT_CKSUM |
+		    /*IEEE802154_HW_FRAME_RETRIES |*/
 		    IEEE802154_HW_PROMISCUOUS;
 
 	hw->phy->flags = WPAN_PHY_FLAG_TXPOWER; /* |
@@ -129,7 +151,6 @@ static int pl360_probe(struct spi_device *spi)
 	ieee802154_random_extended_addr(&hw->phy->perm_extended_addr);
 
 	mutex_init(&lp->bmux);
-	mutex_init(&lp->plmux);
 
 	spi_set_drvdata(spi, lp);
 	ret = pl360_hw_init(lp);
@@ -152,7 +173,6 @@ static int pl360_probe(struct spi_device *spi)
 
 err_hw_init:
 	mutex_destroy(&lp->bmux);
-	mutex_destroy(&lp->plmux);
 	ieee802154_free_hw(lp->hw);
 
 	return ret;
@@ -168,7 +188,6 @@ static int pl360_remove(struct spi_device *spi)
 
 	ieee802154_unregister_hw(lp->hw);
 	mutex_destroy(&lp->bmux);
-	mutex_destroy(&lp->plmux);
 	ieee802154_free_hw(lp->hw);
 
 	return 0;
