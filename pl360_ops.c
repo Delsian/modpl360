@@ -274,12 +274,15 @@ static int pl360_rx(struct pl360_local *lp, plc_pkt_t* pkt) {
 			"corrupted frame received len %d\n", reallen);
 		reallen = IEEE802154_MTU;
 	}
-	skb = dev_alloc_skb(reallen + 2);
+	skb = dev_alloc_skb(IEEE802154_MTU);
 	if (!skb) {
+		dev_dbg(&lp->spi->dev, "failed to allocate sk_buff\n");
 		return -ENOMEM;
 	}
-	memcpy(skb_put(skb, reallen),&(pkt->buf[1]),reallen);
-	ieee802154_rx_irqsafe(lp->hw, skb, 1); // LQI ToDo!!!
+	//memcpy(skb_put(skb, reallen),&(pkt->buf[1]),reallen);
+	skb_put_data(skb, &(pkt->buf[1]), reallen);
+	ieee802154_rx_irqsafe(lp->hw, skb, lp->rssi);
+	lp->trac.rx_success++;
 	return 0;
 }
 
@@ -306,6 +309,7 @@ static void pl360_handle_rx_work(struct work_struct *work)
 			tx_cfm_t* cfm = (tx_cfm_t*)cfmpkt->buf;
 			txstate = TX_READY;
 			kfree(cfmpkt);
+			lp->trac.tx_success++;
 		} else if (lp->events & ATPL360_REG_RSP_MASK) {
 			// Handle RegResp
 			plc_pkt_t* rsppkt;
@@ -319,32 +323,31 @@ static void pl360_handle_rx_work(struct work_struct *work)
 			rsppkt->len = evt_len;
 			pl360_datapkt(lp, PLC_CMD_READ, rsppkt);
 			kfree(rsppkt);
-		} else if (lp->events & ATPL360_RX_QPAR_IND_FLAG_MASK) {
-			plc_pkt_t* qpkt;
+		} else if (lp->events & ATPL360_RX_QPAR_IND_FLAG_MASK ||
+				lp->events & ATPL360_RX_DATA_IND_FLAG_MASK) {
+			// Handle RX data, data length (15 bits) 
+			uint16_t l = (status.evt & 0x7F)*2;
+			plc_pkt_t* rxpkt = (plc_pkt_t*)kmalloc(l + sizeof(plc_pkt_t), 
+				GFP_KERNEL);
+			rxpkt->addr = ATPL360_RX_DATA_ID;
+			rxpkt->len = l;
+			pl360_datapkt(lp, PLC_CMD_READ, rxpkt);
 			// Handle RX qpar
-			qpkt = (plc_pkt_t*)kmalloc(sizeof(rx_msg_t)
+			plc_pkt_t* qpkt = (plc_pkt_t*)kmalloc(sizeof(rx_msg_t)
 				- 4 + sizeof(plc_pkt_t), GFP_KERNEL);
 			qpkt->addr = ATPL360_RX_PARAM_ID;
 			qpkt->len = sizeof(rx_msg_t) - 4;
 			pl360_datapkt(lp, PLC_CMD_READ, qpkt);
 			rx_msg_t* rxq = (rx_msg_t *)qpkt->buf;
 			lp->rssi = rxq->us_rssi;
-			kfree(qpkt);
-		} else if (lp->events & ATPL360_RX_DATA_IND_FLAG_MASK) {
-			plc_pkt_t* rxpkt;
-			// Handle RX data, data length (15 bits) 
-			uint16_t l = (status.evt & 0x7F)*2;
-			rxpkt = (plc_pkt_t*)kmalloc(l + sizeof(plc_pkt_t), 
-				GFP_KERNEL);
-			rxpkt->addr = ATPL360_RX_DATA_ID;
-			rxpkt->len = l;
-			pl360_datapkt(lp, PLC_CMD_READ, rxpkt);
 			if(rxpkt->buf[0]<=l) {
 				pl360_rx(lp, rxpkt);
 			} else {
-				printk("RX bad lengyn %d internal %d", l, rxpkt->buf[0]);
+				lp->trac.invalid++;
+				printk("RX bad lengtn %d internal %d", l, rxpkt->buf[0]);
 			}
 			kfree(rxpkt);
+			kfree(qpkt);
 			txstate = TX_READY;
 		}
 	} while (lp->events);
@@ -424,6 +427,8 @@ int ops_pl360_start(struct ieee802154_hw *hw)
 	int ret = 0;
 	struct pl360_local *lp = hw->priv;
 
+	memset(&lp->trac, 0, sizeof(struct pl360_trac));
+
 	ret = kfifo_alloc(&tx_fifo,PL360_FIFO_SIZE,GFP_KERNEL);
 	if(ret) {
 		goto err_ops_start;
@@ -465,13 +470,8 @@ err_ops_start:
 
 int ops_pl360_ed(struct ieee802154_hw *hw, u8 *level)
 {
-	struct pl360_local *lp = hw->priv;
-
-	*level = lp->rssi;
-
-	dev_vdbg(&lp->spi->dev, "%s level=%d\n",
-		 __func__, *level);
-
+	WARN_ON(!level);
+	*level = 0xbe;
 	return 0;
 }
 

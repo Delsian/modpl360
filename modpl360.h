@@ -73,6 +73,12 @@ SOFTWARE.
 #define ATPL360_MISCR_SET_GPIO_2_ZC                 (0x1u << 25) /**< \brief (ATPL360_MISCR) Change GPIO ZeroCross: ZC by GPIO_2 */
 #define ATPL360_MISCR_SIGN_FAIL                     (0x1u << 26) /**< \brief (ATPL360_MISCR) Check fail in Signature check */
 
+struct pl360_trac {
+	u64 tx_success;
+	u64 rx_success;
+	u64 invalid;
+};
+
 struct pl360_local {
 	struct spi_device *spi;
 	//struct completion tx_complete;
@@ -89,6 +95,7 @@ struct pl360_local {
 	u8 max_cca_retries;
 	u8 max_be;
 	u8 min_be;
+	struct pl360_trac trac;
 
 	int gpio_nrst;
 	int gpio_irq;

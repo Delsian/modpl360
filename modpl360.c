@@ -44,48 +44,43 @@ static const struct ieee802154_ops pl360_ops = {
 
 static int pl360_stats_show(struct seq_file *file, void *offset)
 {
-	struct pl360_local *lp = spi_get_drvdata(file->private);
-	//u8 stat, irq1;
+	struct pl360_local *lp = file->private;
 
-	/*adf7242_status(lp, &stat);
-	adf7242_read_reg(lp, REG_IRQ1_SRC1, &irq1);
-
-	seq_printf(file, "IRQ1 = %X:\n%s%s%s%s%s%s%s%s\n", irq1,
-		   irq1 & IRQ_CCA_COMPLETE ? "IRQ_CCA_COMPLETE\n" : "",
-		   irq1 & IRQ_SFD_RX ? "IRQ_SFD_RX\n" : "",
-		   irq1 & IRQ_SFD_TX ? "IRQ_SFD_TX\n" : "",
-		   irq1 & IRQ_RX_PKT_RCVD ? "IRQ_RX_PKT_RCVD\n" : "",
-		   irq1 & IRQ_TX_PKT_SENT ? "IRQ_TX_PKT_SENT\n" : "",
-		   irq1 & IRQ_CSMA_CA ? "IRQ_CSMA_CA\n" : "",
-		   irq1 & IRQ_FRAME_VALID ? "IRQ_FRAME_VALID\n" : "",
-		   irq1 & IRQ_ADDRESS_VALID ? "IRQ_ADDRESS_VALID\n" : "");
-
-	seq_printf(file, "STATUS = %X:\n%s\n%s\n%s\n%s\n%s%s%s%s%s\n", stat,
-		   stat & STAT_SPI_READY ? "SPI_READY" : "SPI_BUSY",
-		   stat & STAT_IRQ_STATUS ? "IRQ_PENDING" : "IRQ_CLEAR",
-		   stat & STAT_RC_READY ? "RC_READY" : "RC_BUSY",
-		   stat & STAT_CCA_RESULT ? "CHAN_IDLE" : "CHAN_BUSY",
-		   (stat & 0xf) == RC_STATUS_IDLE ? "RC_STATUS_IDLE" : "",
-		   (stat & 0xf) == RC_STATUS_MEAS ? "RC_STATUS_MEAS" : "",
-		   (stat & 0xf) == RC_STATUS_PHY_RDY ? "RC_STATUS_PHY_RDY" : "",
-		   (stat & 0xf) == RC_STATUS_RX ? "RC_STATUS_RX" : "",
-		   (stat & 0xf) == RC_STATUS_TX ? "RC_STATUS_TX" : "");*/
-
-	seq_printf(file, "RSSI = %d\n", lp->rssi);
-
+	seq_printf(file, "TX SUCCESS:\t\t%8llu\n", lp->trac.tx_success);
+	seq_printf(file, "RX SUCCESS:\t\t%8llu\n", lp->trac.rx_success);
+	seq_printf(file, "INVALID:\t\t%8llu\n", lp->trac.invalid);
 	return 0;
 }
 
-static void pl360_debugfs_init(struct pl360_local *lp)
+static int pl360_stats_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pl360_stats_show, inode->i_private);
+}
+
+static const struct file_operations pl360_stats_fops = {
+	.open		= pl360_stats_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int pl360_debugfs_init(struct pl360_local *lp)
 {
 	char debugfs_dir_name[DNAME_INLINE_LEN + 1] = "pl360-";
+	struct dentry *stats;
 
 	strncat(debugfs_dir_name, dev_name(&lp->spi->dev), DNAME_INLINE_LEN);
 
 	lp->debugfs_root = debugfs_create_dir(debugfs_dir_name, NULL);
+	if (!lp->debugfs_root)
+		return -ENOMEM;
 
-	debugfs_create_devm_seqfile(&lp->spi->dev, "status", lp->debugfs_root,
-				    pl360_stats_show);
+	stats = debugfs_create_file("stats", 0444,
+				    lp->debugfs_root, lp,
+				    &pl360_stats_fops);
+	if (!stats)
+		return -ENOMEM;
+	return 0;
 }
 
 static const s32 pl360_powers[] = {
@@ -182,7 +177,7 @@ static int pl360_remove(struct spi_device *spi)
 {
 	struct pl360_local *lp = spi_get_drvdata(spi);
 
-	printk("remove pl360\n");
+	dev_info(&spi->dev,"remove pl360\n");
 
 	debugfs_remove_recursive(lp->debugfs_root);
 
