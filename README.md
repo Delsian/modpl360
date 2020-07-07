@@ -3,8 +3,10 @@ Linux device driver for PL360
 
 ## Build
 
+    sudo -s
+    apt install raspberrypi-kernel-headers
     make
-    make install
+    make install install raspberrypi-kernel-headers
     make dts
     
 ## Setup
