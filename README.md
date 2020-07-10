@@ -31,6 +31,10 @@ If you use SPI other tan spi0.0, change pl360-overlay.dts and run'make dts' agai
 Check PLC acces to remote node:
 
     ping6 -i0.1 2001::3
+    
+Check neighbors:
+
+    ip -6 neigh show
 
 ## Wireshark
 
@@ -38,3 +42,7 @@ Command to observe packets:
 
     plink.exe -batch -ssh -pw pass user@host "sudo /usr/sbin/tcpdump -Unqi wpan0 -s 0 -w -"   | "C:\Program Files\Wireshark\Wireshark.exe" -k -i -
     
+
+## IPv6 HowTo
+
+http://www.tldp.org/HOWTO/Linux+IPv6-HOWTO/index.html
