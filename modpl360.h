@@ -45,6 +45,7 @@ SOFTWARE.
 #define PDC_PLC_BUFFER_SIZE			(PDC_SPI_HEADER_SIZE + PDC_SPI_MSG_DATA_SIZE+2)
 /** PDC buffer us_size to firmware update process */
 #define PDC_SPI_FUP_BUFFER_SIZE        PDC_SPI_MSG_DATA_SIZE
+/* ToDo: use IEEE802154_MTU+1	from <linux/ieee802154.h> instead */
 #define MAX_PLC_PKT_LEN 160
 
 #define PLC_CMD_READ							0

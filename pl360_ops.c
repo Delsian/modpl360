@@ -326,7 +326,7 @@ static void pl360_handle_rx_work(struct work_struct *work)
 		} else if (lp->events & ATPL360_RX_QPAR_IND_FLAG_MASK ||
 				lp->events & ATPL360_RX_DATA_IND_FLAG_MASK) {
 			// Handle RX data, data length (15 bits) 
-			uint16_t l = (status.evt & 0x7F)*2;
+			uint16_t l = status.evt + PDC_SPI_HEADER_SIZE;
 			plc_pkt_t* rxpkt = (plc_pkt_t*)kmalloc(l + sizeof(plc_pkt_t), 
 				GFP_KERNEL);
 			rxpkt->addr = ATPL360_RX_DATA_ID;
@@ -487,6 +487,7 @@ void ops_pl360_stop(struct ieee802154_hw *hw)
 
 int ops_pl360_xmit(struct ieee802154_hw *hw, struct sk_buff *skb) {
 	//printk("pl360 xmit %d \n", skb->len);
+	if(skb->len > IEEE802154_MTU) return -IEEE802154_FRAME_TOO_LONG;
 	plc_pkt_t* pkt;
 	struct pl360_local *lp = hw->priv;
 
