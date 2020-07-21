@@ -46,3 +46,10 @@ Command to observe packets:
 ## IPv6 HowTo
 
 http://www.tldp.org/HOWTO/Linux+IPv6-HOWTO/index.html
+
+## Useful tricks
+
+Set default route for CoAP via lowpan
+
+    sudo ip -6 route add ff02::fd/128 dev lowpan0 table local
+    
