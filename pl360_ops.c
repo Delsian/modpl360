@@ -274,7 +274,7 @@ static int pl360_rx(struct pl360_local *lp, plc_pkt_t* pkt) {
 			"corrupted frame received len %d\n", reallen);
 		reallen = IEEE802154_MTU;
 	}
-	skb = dev_alloc_skb(IEEE802154_MTU);
+	skb = dev_alloc_skb(MAX_PLC_PKT_LEN);
 	if (!skb) {
 		dev_dbg(&lp->spi->dev, "failed to allocate sk_buff\n");
 		return -ENOMEM;
@@ -340,7 +340,7 @@ static void pl360_handle_rx_work(struct work_struct *work)
 			pl360_datapkt(lp, PLC_CMD_READ, qpkt);
 			rx_msg_t* rxq = (rx_msg_t *)qpkt->buf;
 			lp->rssi = rxq->us_rssi;
-			if(rxpkt->buf[0]<=l) {
+			if(rxpkt->buf[0]<=l && rxpkt->buf[0] <= MAX_PLC_PKT_LEN) {
 				pl360_rx(lp, rxpkt);
 			} else {
 				lp->trac.invalid++;
